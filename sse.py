@@ -5,6 +5,7 @@ import httpx
 
 
 class SSE:
+    STATIC_URL = "https://static.sse.com.cn"
     # --- 封装配置数据 ---
     PLATE_MAP = {
         "全部": "0101,120100,020100,020200,120200",
@@ -99,19 +100,74 @@ class SSE:
             dict_rsp = response.json()
             report_info_list = dict_rsp.get('result') or []
 
-            result = []
+            final_data = []
             for report_info in report_info_list:
-                if annual in report_info.get("TITLE"):
-                    # 字典推导式：只取需要的 key
-                    result.append({k: report_info[k] for k in target_keys if k in report_info})
+                # 1. 过滤逻辑：只处理包含关键字的报告
+                if annual in report_info.get("TITLE", ""):
+                    # 2. 提取并构造新字典
+                    item = {k: report_info[k] for k in target_keys if k in report_info}
 
-            return {"code": 0, "data": result}
+                    # 3. 直接在提取时拼接 URL，减少后续循环
+                    if "URL" in item:
+                        item["URL"] = f"{self.STATIC_URL}{item['URL']}"
+
+                    final_data.append(item)
+
+            return {"code": 0, "data": final_data}
 
         except httpx.HTTPStatusError as e:
             return {"code": 1, "data": f"HTTP error occurred: {e}"}
 
         except Exception as e:
             return {"code": 1, "data": f"An error occurred: {e}"}
+
+    @staticmethod
+    def get_acw_sc__v2(arg1):
+        """
+        Python 还原 acw_sc__v2 加密逻辑
+        :param arg1: 网页源代码中提取到的 arg1 变量
+        :return: 算出的 cookie 值
+        """
+        # 映射表 (JS 中的 posList)
+        pos_list = [
+            15, 35, 29, 24, 33, 16, 1, 38, 10, 9, 19, 31, 40, 27, 22, 23,
+            25, 13, 6, 11, 39, 18, 20, 8, 14, 21, 32, 26, 2, 30, 7, 4,
+            17, 5, 3, 28, 34, 37, 12, 36
+        ]
+
+        # 掩码 (JS 中的 mask)
+        mask = "3000176000856006061501533003690027800375"
+
+        # 步骤 1: 字符串重排
+        # 初始化一个长度为 40 的列表
+        output_list = [''] * len(pos_list)
+        for i in range(len(arg1)):
+            char = arg1[i]
+            # 找到 i+1 在 pos_list 中的索引位置
+            for j in range(len(pos_list)):
+                if pos_list[j] == i + 1:
+                    output_list[j] = char
+
+        arg2 = "".join(output_list)
+
+        # 步骤 2: 十六进制异或
+        arg3 = ""
+        # 步长为 2 遍历
+        for i in range(0, len(arg2), 2):
+            if i >= len(mask):
+                break
+
+            # 取两个字符转为 16 进制整数
+            str_char_val = int(arg2[i:i + 2], 16)
+            mask_char_val = int(mask[i:i + 2], 16)
+
+            # 异或并转回 16 进制，补足两位
+            xor_val = hex(str_char_val ^ mask_char_val)[2:]
+            if len(xor_val) == 1:
+                xor_val = '0' + xor_val
+            arg3 += xor_val
+
+        return "acw_sc__v2=" + arg3
 
     def read_corp_lintel_content(self, pdf_url: str) -> dict:
         """
@@ -128,20 +184,20 @@ if __name__ == '__main__':
 
             # 测试3: 查询年报
             print("\n" + "=" * 50)
-            print("测试3: 查询600036的2023年年报")
-            r = await sse.get_corp_lintel_list("600036", "年报", "2023")
+            print("测试3: 查询600036的2025年第三季度报")
+            r = await sse.get_corp_lintel_list("600036", "第三季度报", "2025")
             print(f"结果: {r}")
-
-            # 测试4: 查询全部报告
-            print("\n" + "=" * 50)
-            print("测试4: 查询600036的2024年全部报告")
-            r = await sse.get_corp_lintel_list("600036", "全部", "2024")
-            print(f"结果: {r}")
-
-            # 测试5: 查询半年报
-            print("\n" + "=" * 50)
-            print("测试5: 查询600036的2024年半年报")
-            r = await sse.get_corp_lintel_list("600036", "半年报", "2024")
-            print(f"结果: {r}")
+            #
+            # # 测试4: 查询全部报告
+            # print("\n" + "=" * 50)
+            # print("测试4: 查询600036的2024年全部报告")
+            # r = await sse.get_corp_lintel_list("600036", "全部", "2024")
+            # print(f"结果: {r}")
+            #
+            # # 测试5: 查询半年报
+            # print("\n" + "=" * 50)
+            # print("测试5: 查询600036的2024年半年报")
+            # r = await sse.get_corp_lintel_list("600036", "半年报", "2024")
+            # print(f"结果: {r}")
 
     asyncio.run(test())
