@@ -2,6 +2,7 @@
 import time
 import asyncio
 import httpx
+import aiofiles
 
 
 class SSE:
@@ -29,11 +30,11 @@ class SSE:
     }
 
     def __init__(self):
-        headers = {
+        self.headers = {
             'Referer': 'https://www.sse.com.cn/',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
         }
-        self.client = httpx.AsyncClient(base_url='https://query.sse.com.cn', headers=headers)
+        self.client = httpx.AsyncClient(headers=self.headers)
 
     async def close(self):
         """关闭HTTP客户端"""
@@ -95,7 +96,7 @@ class SSE:
         target_keys = ["SECURITY_CODE", "SECURITY_NAME", "TITLE", "URL", "BULLETIN_YEAR", "BULLETIN_TYPE", "SSEDATE"]
 
         try:
-            response = await self.client.get('/security/stock/queryCompanyBulletin.do', params=params)
+            response = await self.client.get('https://query.sse.com.cn/security/stock/queryCompanyBulletin.do', params=params)
             response.raise_for_status()
             dict_rsp = response.json()
             report_info_list = dict_rsp.get('result') or []
@@ -168,6 +169,29 @@ class SSE:
             arg3 += xor_val
 
         return "acw_sc__v2=" + arg3
+
+    async def download_pdf(self, pdf_url, pdf_name):
+        """
+        下载财报pdf
+        :param pdf_url: 财报URL地址
+        :param pdf_name: 财报名称
+        :return:
+        """
+        pdf_resp = await self.client.get(pdf_url)
+
+        async with aiofiles.open(f'{pdf_name}.pdf', mode='wb') as file:
+            await file.write(pdf_resp.content)
+            await file.close()
+            return {"code": 0, "data": f"{pdf_name}.pdf Save Success"}
+
+    def set_cookie(self, arg):
+        """
+        设置cookie
+        :param arg: 加密值
+        :return:
+        """
+        ck_content = self.get_acw_sc__v2(arg)
+        self.client.headers.update({'cookie': ck_content})
 
     def read_corp_lintel_content(self, pdf_url: str) -> dict:
         """
