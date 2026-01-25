@@ -126,6 +126,16 @@ class SZSE:
         except Exception as e:
             return {"code": 1, "data": f"An error occurred: {e}"}
 
+    async def download_pdf(self, url, title, path):
+        """
+        下载财报
+        :param url: 下载地址
+        :param title: 财报名
+        :param path: 保存路径
+        :return:
+        """
+        pass
+
     def read_corp_lintel_content(self, pdf_url: str) -> dict:
         """
         读取公司定期报告内容
