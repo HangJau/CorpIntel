@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 import time
+import re
 import asyncio
+from pathlib import Path
+
 import httpx
 import aiofiles
 
@@ -170,19 +173,27 @@ class SSE:
 
         return "acw_sc__v2=" + arg3
 
-    async def download_pdf(self, pdf_url, pdf_name):
+    async def download_pdf(self, pdf_url, pdf_name: str, path: str):
         """
         下载财报pdf
         :param pdf_url: 财报URL地址
         :param pdf_name: 财报名称
+        :param path: 保存财报地址
         :return:
         """
         pdf_resp = await self.client.get(pdf_url)
 
-        async with aiofiles.open(f'{pdf_name}.pdf', mode='wb') as file:
+        if re_result := re.search(r"var arg1='(.+?)'", pdf_resp.text):
+            arg1 = re_result.group(1)
+            self.set_cookie(arg1)
+        file_path = Path(path).joinpath(pdf_name)
+        pdf_resp = await self.client.get(pdf_url)
+
+        async with aiofiles.open(f'{file_path}.pdf', mode='wb') as file:
             await file.write(pdf_resp.content)
             await file.close()
-            return {"code": 0, "data": f"{pdf_name}.pdf Save Success"}
+
+        return {"code": 0, "data": f"{pdf_name}.pdf Save Success. save path {path}"}
 
     def set_cookie(self, arg):
         """
