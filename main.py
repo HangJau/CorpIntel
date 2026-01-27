@@ -27,7 +27,6 @@ def get_financial_report_list(stock_code: str, report_type: Literal["年报", "�
     :param annual: 年份
     :return:
     """
-    # TODO 待补充mcp tools
     sse_type = ("600", "601", "603", "605", "688")
     szse_type = ("000", "001", "002", "003", "004", "300")
     if stock_code.startswith(sse_type):

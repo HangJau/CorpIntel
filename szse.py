@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 import re
 import random
-from typing import List
 import asyncio
+from pathlib import Path
+
+import aiofiles
 import httpx
 
 
 class SZSE:
+    DOWNLOAD_URL = "https://disc.static.szse.cn/download"
     # --- 封装配置数据 ---
     PLATE_MAP = {
         "主板": "11",
@@ -32,7 +35,7 @@ class SZSE:
         headers = {
             'Host': 'www.szse.cn',
             'origin': 'https://www.szse.cn',
-            'Referer': 'https://www.szse.cn/disclosure/listed/fixed/index.html',
+            'Referer': 'https://www.szse.cn/',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
         }
         self.client = httpx.AsyncClient(base_url='https://www.szse.cn', headers=headers)
@@ -92,7 +95,7 @@ class SZSE:
         data["seDate"] = [start_date, end_date]
 
         # 定义你需要的 key 列表
-        target_keys = ["SECURITY_CODE", "SECURITY_NAME", "TITLE", "URL", "BULLETIN_YEAR", "BULLETIN_TYPE", "SSEDATE"]
+        # target_keys = ["SECURITY_CODE", "SECURITY_NAME", "TITLE", "URL", "BULLETIN_YEAR", "BULLETIN_TYPE", "SSEDATE"]
 
         try:
             response = await self.client.post('/api/disc/announcement/annList', params=param, json=data)
@@ -111,7 +114,7 @@ class SZSE:
                                 "SECURITY_CODE": report_info['secCode'][0],
                                 "SECURITY_NAME": report_info['secName'][0],
                                 "TITLE": title,
-                                "URL": report_info["attachPath"],
+                                "URL": self.DOWNLOAD_URL + report_info["attachPath"],
                                 "BULLETIN_YEAR": year,
                                 "BULLETIN_TYPE": report_type,
                                 "SZSEDATE": report_info["publishTime"]
@@ -126,15 +129,30 @@ class SZSE:
         except Exception as e:
             return {"code": 1, "data": f"An error occurred: {e}"}
 
-    async def download_pdf(self, url, title, path):
+    async def download_pdf(self, pdf_url, pdf_name: str, path: str):
         """
         下载财报
-        :param url: 下载地址
-        :param title: 财报名
+        :param pdf_url: 下载地址
+        :param pdf_name: 财报名
         :param path: 保存路径
         :return:
         """
-        pass
+        try:
+            self.client.headers.update({"Host": "disc.static.szse.cn"})
+            pdf_resp = await self.client.get(pdf_url, params={"n": pdf_name + ".pdf"})
+            pdf_resp.raise_for_status()
+            file_path = Path(path).joinpath(pdf_name)
+
+            # print(pdf_resp.text)
+
+            async with aiofiles.open(f'{file_path}.pdf', mode='wb') as file:
+                await file.write(pdf_resp.content)
+                await file.close()
+
+            return {"code": 0, "data": f"{pdf_name}.pdf Save Success. save path {path}"}
+
+        except IOError as e:
+            return {"code": 1, "data": f"IO error occurred: {e}"}
 
     def read_corp_lintel_content(self, pdf_url: str) -> dict:
         """
@@ -147,24 +165,30 @@ class SZSE:
 
 if __name__ == '__main__':
     async def test():
-        async with SZSE() as sse:
+        async with SZSE() as szse:
             # 测试3: 查询年报
             print("\n" + "=" * 50)
-            print("测试3: 查询600036的2023年年报")
-            r = await sse.get_corp_lintel_list("002083", "年报", "2023")
-            print(f"结果: {r}")
+            # print("测试3: 查询600036的2023年年报")
+            # r = await sse.get_corp_lintel_list("002083", "年报", "2023")
+            # print(f"结果: {r}")
+            #
+            # # 测试4: 查询全部报告
+            # print("\n" + "=" * 50)
+            # print("测试4: 查询600036的2024年全部报告")
+            # r = await sse.get_corp_lintel_list("002083", "全部", "2024")
+            # print(f"结果: {r}")
+            #
+            # # 测试5: 查询半年报
+            # print("\n" + "=" * 50)
+            # print("测试5: 查询600036的2024年半年报")
+            # r = await sse.get_corp_lintel_list("002083", "半年报", "2024")
+            # print(f"结果: {r}")
 
-            # 测试4: 查询全部报告
-            print("\n" + "=" * 50)
-            print("测试4: 查询600036的2024年全部报告")
-            r = await sse.get_corp_lintel_list("002083", "全部", "2024")
-            print(f"结果: {r}")
-
-            # 测试5: 查询半年报
-            print("\n" + "=" * 50)
-            print("测试5: 查询600036的2024年半年报")
-            r = await sse.get_corp_lintel_list("002083", "半年报", "2024")
-            print(f"结果: {r}")
+            # r = await szse.get_corp_lintel_list("000524", "第三季度报", "2025")
+            # print(f"结果: {r}")
+            await szse.download_pdf(
+                "https://disc.static.szse.cn/download/disc/disk03/finalpage/2025-10-31/df8c95e9-e004-4c5d-9429-21623efa5259.PDF",
+                "岭南控股：2025年三季度报告", "D:\Temp\mycode\CorpIntel")
 
 
     asyncio.run(test())
