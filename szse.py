@@ -18,17 +18,17 @@ class SZSE:
 
     REPORT_TYPE_MAP = {
         "年报": "010301",
-        "第一季度报": "010305",
-        "半年报": "010303",
-        "第三季度报": "010307",
+        "一季度报": "010305",
+        "半年度报": "010303",
+        "三季度报": "010307",
         "全部": ""
     }
 
     PUBLICATION_TIME_MAP = {
         "年报": {"start_date": "01-01", "end_date": "04-30"},
-        "第一季度报": {"start_date": "04-01", "end_date": "04-30"},
-        "半年报": {"start_date": "07-01", "end_date": "08-31"},
-        "第三季度报": {"start_date": "10-01", "end_date": "10-31"}
+        "一季度报": {"start_date": "04-01", "end_date": "04-30"},
+        "半年度报": {"start_date": "07-01", "end_date": "08-31"},
+        "三季度报": {"start_date": "10-01", "end_date": "10-31"}
     }
 
     def __init__(self):
@@ -76,7 +76,7 @@ class SZSE:
         }
 
         # 计算日期范围
-        if report_type in ("第一季度报", "半年报", "第三季度报"):
+        if report_type in ("一季度报", "半年度报", "三季度报"):
             year = annual
             start_date = f"{year}-{self.PUBLICATION_TIME_MAP[report_type]['start_date']}"
             end_date = f"{year}-{self.PUBLICATION_TIME_MAP[report_type]['end_date']}"
@@ -129,10 +129,11 @@ class SZSE:
         except Exception as e:
             return {"code": 1, "data": f"An error occurred: {e}"}
 
-    async def download_pdf(self, pdf_url, pdf_name: str, path: str):
+    async def download_pdf(self, pdf_url, code:str, pdf_name: str, path: str):
         """
         下载财报
         :param pdf_url: 下载地址
+        :param code: 股票代码
         :param pdf_name: 财报名
         :param path: 保存路径
         :return:
@@ -141,9 +142,7 @@ class SZSE:
             self.client.headers.update({"Host": "disc.static.szse.cn"})
             pdf_resp = await self.client.get(pdf_url, params={"n": pdf_name + ".pdf"})
             pdf_resp.raise_for_status()
-            file_path = Path(path).joinpath(pdf_name)
-
-            # print(pdf_resp.text)
+            file_path = Path(path).joinpath(f"({code})" + pdf_name)
 
             async with aiofiles.open(f'{file_path}.pdf', mode='wb') as file:
                 await file.write(pdf_resp.content)

@@ -1,8 +1,10 @@
-# from enum import Enum
+import os
+from pathlib import Path
 from typing import Literal
 from fastmcp import FastMCP
 from sse import SSE
 from szse import SZSE
+
 
 #
 # class REPORT_TYPE(str, Enum):
@@ -19,7 +21,7 @@ szse = SZSE()
 
 
 @corp_intel_mcp.tool()
-def get_financial_report_list(stock_code: str, report_type: Literal["年报", "第一季度报", "半年报", "第三季度报"], annual: str):
+def get_financial_report_list(stock_code: str, report_type: Literal["年报", "一季度报", "半年度报", "三季度报"], annual: str):
     """
     获取指定股票的财务报表列表
     :param stock_code: 股票代码
@@ -40,19 +42,25 @@ def get_financial_report_list(stock_code: str, report_type: Literal["年报", "�
 
 
 @corp_intel_mcp.tool()
-async def download_financial_report(url: str, title: str, path: str):
+async def download_financial_report(url: str, code: str, title: str, path: str=None):
     """
     下载财务报表到指定的目录
     :param url: 下载地址
+    :param code: 股票代码
     :param title: 报告名称
-    :param path: 保存路径
+    :param path: 保存路径, 默认为当前项目的output目录，可通过环境变量OUTPUT_DIR指定
     :return: {"code": 0, "data": f"{pdf_name}.pdf Save Success. save path {path}"}
     """
+    if path:
+        output_dir = path
+    else:
+        output_dir = os.getenv("OUTPUT_DIR", str(Path(__file__).parent.joinpath("output")))
+
     if "sse" in url:
-        return await sse.download_pdf(url, title, path)
+        return await sse.download_pdf(url, code, title, output_dir)
 
     elif "szse" in url:
-        return await szse.download_pdf(url, title, path)
+        return await szse.download_pdf(url, code, title, output_dir)
 
     else:
         return {"code": 1, "data": "download error"}

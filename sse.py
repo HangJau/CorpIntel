@@ -20,16 +20,16 @@ class SSE:
     REPORT_TYPE_MAP = {
         "全部": "ALL",
         "年报": "YEARLY",
-        "第一季度报": "QUATER1",
-        "半年报": "QUATER2",
-        "第三季度报": "QUATER3",
+        "一季度报": "QUATER1",
+        "半年度报": "QUATER2",
+        "三季度报": "QUATER3",
     }
 
     PUBLICATION_TIME_MAP = {
         "年报": {"start_date": "01-01", "end_date": "04-30"},
-        "第一季度报": {"start_date": "04-01", "end_date": "04-30"},
-        "半年报": {"start_date": "07-01", "end_date": "08-31"},
-        "第三季度报": {"start_date": "10-01", "end_date": "10-31"}
+        "一季度报": {"start_date": "04-01", "end_date": "04-30"},
+        "半年度报": {"start_date": "07-01", "end_date": "08-31"},
+        "三季度报": {"start_date": "10-01", "end_date": "10-31"}
     }
 
     def __init__(self):
@@ -80,7 +80,7 @@ class SSE:
         }
 
         # 计算日期范围
-        if report_type in ("第一季度报", "半年报", "第三季度报"):
+        if report_type in ("一季度报", "半年度报", "三季度报"):
             year = annual
             params['beginDate'] = f"{year}-{self.PUBLICATION_TIME_MAP[report_type]['start_date']}"
             params['endDate'] = f"{year}-{self.PUBLICATION_TIME_MAP[report_type]['end_date']}"
@@ -173,10 +173,11 @@ class SSE:
 
         return "acw_sc__v2=" + arg3
 
-    async def download_pdf(self, pdf_url, pdf_name: str, path: str):
+    async def download_pdf(self, pdf_url, code:str, pdf_name: str, path: str):
         """
         下载财报pdf
         :param pdf_url: 财报URL地址
+        :param code: 股票代码
         :param pdf_name: 财报名称
         :param path: 保存财报地址
         :return:
@@ -186,7 +187,7 @@ class SSE:
         if re_result := re.search(r"var arg1='(.+?)'", pdf_resp.text):
             arg1 = re_result.group(1)
             self.set_cookie(arg1)
-        file_path = Path(path).joinpath(pdf_name)
+        file_path = Path(path).joinpath(f"({code})" + pdf_name)
         pdf_resp = await self.client.get(pdf_url)
 
         async with aiofiles.open(f'{file_path}.pdf', mode='wb') as file:
@@ -219,7 +220,7 @@ if __name__ == '__main__':
 
             # 测试3: 查询年报
             print("\n" + "=" * 50)
-            print("测试3: 查询600036的2025年第三季度报")
+            print("测试3: 查询600036的2025年三季度报")
             r = await sse.get_corp_lintel_list("600036", "第三季度报", "2025")
             print(f"结果: {r}")
             #
