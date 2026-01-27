@@ -99,7 +99,8 @@ class SSE:
         target_keys = ["SECURITY_CODE", "SECURITY_NAME", "TITLE", "URL", "BULLETIN_YEAR", "BULLETIN_TYPE", "SSEDATE"]
 
         try:
-            response = await self.client.get('https://query.sse.com.cn/security/stock/queryCompanyBulletin.do', params=params)
+            response = await self.client.get('https://query.sse.com.cn/security/stock/queryCompanyBulletin.do',
+                                             params=params)
             response.raise_for_status()
             dict_rsp = response.json()
             report_info_list = dict_rsp.get('result') or []
@@ -173,7 +174,7 @@ class SSE:
 
         return "acw_sc__v2=" + arg3
 
-    async def download_pdf(self, pdf_url, code:str, pdf_name: str, path: str):
+    async def download_pdf(self, pdf_url, code: str, pdf_name: str, path: str):
         """
         下载财报pdf
         :param pdf_url: 财报URL地址
@@ -217,13 +218,16 @@ class SSE:
 if __name__ == '__main__':
     async def test():
         async with SSE() as sse:
-
             # 测试3: 查询年报
-            print("\n" + "=" * 50)
-            print("测试3: 查询600036的2025年三季度报")
-            r = await sse.get_corp_lintel_list("600036", "第三季度报", "2025")
-            print(f"结果: {r}")
-            #
+            # print("\n" + "=" * 50)
+            # print("测试3: 查询600036的2025年三季度报")
+            # r = await sse.get_corp_lintel_list("600036", "三季度报", "2025")
+            # print(f"结果: {r}")
+
+            res = await sse.download_pdf(
+                'https://static.sse.com.cn/disclosure/listedinfo/announcement/c/new/2025-10-30/600036_20251030_29FE.pdf',
+                "600036", "招商银行股份有限公司2025年第三季度报告", "D:/Temp/mycode/CorpIntel/output")
+            print(f"结果: {res}")
             # # 测试4: 查询全部报告
             # print("\n" + "=" * 50)
             # print("测试4: 查询600036的2024年全部报告")
@@ -235,5 +239,6 @@ if __name__ == '__main__':
             # print("测试5: 查询600036的2024年半年报")
             # r = await sse.get_corp_lintel_list("600036", "半年报", "2024")
             # print(f"结果: {r}")
+
 
     asyncio.run(test())

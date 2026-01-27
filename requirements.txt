@@ -1,3 +1,9 @@
 httpx
 aiofiles
 fastmcp
+# pdf解析
+docling
+# 向量化知识库
+chromadb
+langchain-community
+langchain-huggingface
