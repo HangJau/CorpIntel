@@ -146,7 +146,7 @@ async def pdf_to_md(pdf_path: str):
     ids = []
 
     for i, chunk in enumerate(chunks):
-        chunk_text = chunker.serialize(chunk)
+        chunk_text = chunker.contextualize(chunk)
         
         # 提取 docling 提供的丰富元数据
         # 比如页码 (prov 记录了来源页)
