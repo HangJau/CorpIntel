@@ -7,3 +7,6 @@ docling
 chromadb
 langchain-community
 langchain-huggingface
+langchain-text-splitters
+sentence-transformers
+
