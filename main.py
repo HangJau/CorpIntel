@@ -1,20 +1,21 @@
+import asyncio
 import os
+import uuid
 from pathlib import Path
 from typing import Literal
-from fastmcp import FastMCP
-from docling.document_converter import DocumentConverter
-from docling.chunking import HybridChunker
 
-import aiofiles
-from sse import SSE
-from szse import SZSE
+from cachetools import TTLCache
+from fastmcp import FastMCP
 import chromadb
 from chromadb.utils import embedding_functions
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from pdfTomd import process_pdf_to_vector_task
+from sse import SSE
+from szse import SZSE
 
-
-
+# 全局任务注册表：最多存储 1000 个任务，每个任务存活 1 小时 (3600秒)
+# 这样即使 AI 忘了查，内存也会自动回收
+task_status_center = TTLCache(maxsize=1000, ttl=3600)
 
 corp_intel_mcp = FastMCP("CorpIntel")
 sse = SSE()
@@ -22,7 +23,8 @@ szse = SZSE()
 
 
 @corp_intel_mcp.tool()
-def find_md_report_list(stock_code,  annual, report_type: Literal["年报", "一季度报", "半年度报", "三季度报"],file_format: Literal["md", "pdf"] = "md"):
+def find_md_report_list(stock_code: str, annual: str, report_type: Literal["年报", "一季度报", "半年度报", "三季度报", "全部"],
+                        file_format: Literal["md", "pdf"] = "md"):
     """
     获取指定股票的财务报表数据，分为PDF和MD格式，PDF格式需要通过download_financial_report进行下载，MD格式已转换
     :param stock_code: 股票代码
@@ -44,12 +46,15 @@ def find_md_report_list(stock_code,  annual, report_type: Literal["年报", "一
     report_resp = list(report_resp)
 
     if not report_resp:
-        return {"code": 1, "msg": "未找到报告，请检查是否有进行转换或通过get_financial_report_list方法查询报告是否存在并通过download_financial_report进行下载"}
+        return {"code": 1,
+                "msg": "未找到报告，请检查是否有进行转换或通过get_financial_report_list方法查询报告是否存在并通过download_financial_report进行下载"}
 
     return {"code": 0, "data": str(report_resp[0])}
 
+
 @corp_intel_mcp.tool()
-def get_financial_report_list(stock_code: str, annual: str, report_type: Literal["年报", "一季度报", "半年度报", "三季度报", "全部"]):
+def get_financial_report_list(stock_code: str, annual: str,
+                              report_type: Literal["年报", "一季度报", "半年度报", "三季度报", "全部"]):
     """
     获取指定股票的财务报表列表
     :param stock_code: 股票代码
@@ -96,143 +101,150 @@ async def download_financial_report(url: str, stock_code: str, title: str):
         return {"code": 1, "data": "下载失败，请重试"}
 
 
-@corp_intel_mcp.tool(task=True)
-async def pdf_to_md(pdf_path: str):
+@corp_intel_mcp.tool()
+async def pdf_to_md_async(pdf_path: str) -> dict:
     """
-    将财务报告pdf转为markdown
-    :param pdf_path: pdf路径
-    :return: {"code": 0, f"{md_name} Save Success. save path {md_abs_path}"}
+    【耗时任务】启动异步解析流程，将 PDF 财报转为 Markdown 并存入向量数据库。
+
+    逻辑：
+    1. 立即返回 task_id。
+    2. 后台执行：Docling解析 -> 语义切片 -> BGE向量化 -> ChromaDB入库。
+
+    注意：
+    - 处理过程通常需要 1-3 分钟。
+    - 调用后，你必须使用 check_task_status(task_id) 轮询进度。
+    - 在状态变为 'completed' 之前，query_financial_knowledge 将无法查到该报告数据。
     """
     if not Path(pdf_path).exists():
-        return {"code": 1, "msg": "文件不存在，请检查文件路径是否正确"}
+        return {"code": 1, "msg": "文件路径不存在"}
 
-    converter = DocumentConverter()
-    result = converter.convert(pdf_path)
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
 
-    # 导出 Markdown
-    markdown_content = result.document.export_to_markdown()
-    pdf_path = Path(pdf_path)
+    # TTLCache 的使用方式和普通 dict 完全一致
+    task_status_center[task_id] = {
+        "status": "running",
+        "progress": "Task initialized",
+        "result": None
+    }
 
-    md_path = pdf_path.parent.parent.joinpath("md")
+    _ = asyncio.create_task(process_pdf_to_vector_task(task_id, pdf_path, task_status_center))
 
-    if not md_path.exists():
-        md_path.mkdir(parents=True, exist_ok=True)
-
-    md_name = pdf_path.name.replace(".pdf", ".md")
-
-    md_abs_path = md_path.joinpath(md_name)
-
-    # 保存结果
-    async with aiofiles.open(md_abs_path, "w", encoding="utf-8") as f:
-        await f.write(markdown_content)
-        await f.close()
-
-    # 写入chromadb
-    output_dir = os.getenv("OUTPUT_DIR", str(Path(__file__).parent.joinpath("output")))
-    chroma_client = chromadb.PersistentClient(path=output_dir)
-    
-    # 显示指定模型为 bge-small-zh-v1.5
-    ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="BAAI/bge-small-zh-v1.5")
-    collection = chroma_client.get_or_create_collection(name="financial_reports", embedding_function=ef)
-
-
-    # 使用 docling 原生 HybridChunker 进行语义切片，能更好地处理表格
-    chunker = HybridChunker()
-    chunk_iter = chunker.chunk(result.document)
-    chunks = list(chunk_iter)
-
-    documents = []
-    metadatas = []
-    ids = []
-
-    for i, chunk in enumerate(chunks):
-        chunk_text = chunker.contextualize(chunk)
-        
-        # 提取 docling 提供的丰富元数据
-        # 比如页码 (prov 记录了来源页)
-        page_numbers = list(set(p.page_no for item in chunk.meta.doc_items for p in item.prov))
-        # 比如层级标题
-        heading_hierarchy = " > ".join(chunk.meta.headings) if chunk.meta.headings else "正文"
-
-        meta = {
-            "source": str(md_abs_path),
-            "filename": md_name,
-            "chunk_index": i,
-            "pages": str(page_numbers), # 存入页码，方便 AI 回答“在第几页”
-            "section": heading_hierarchy # 存入章节名
-        }
-        documents.append(chunk_text)
-        metadatas.append(meta)
-        ids.append(f"{md_name}_chunk_{i}")
-
-    collection.upsert(
-        documents=documents,
-        ids=ids,
-        metadatas=metadatas
-    )
-
-    return {"code": 0, "msg": f"{md_name} Save Success and {len(documents)} semantic chunks added to ChromaDB. save path {md_abs_path}"}
+    return {
+        "code": 0,
+        "task_id": task_id,
+        "msg": "PDF处理任务已在后台启动。处理完成后结果将保留 1 小时。"
+    }
 
 
 @corp_intel_mcp.tool()
-async def query_financial_knowledge(question: str, stock_code: str = None, annual: str = None, report_type: str = None, n_results: int = 5):
+async def check_task_status(task_id: str) -> dict:
     """
-    根据问题在已解析的财报库中进行语义检索。
-    建议提供 stock_code, annual, report_type 以确保检索目标已入库。
+    查询异步解析任务的状态。
+
+    返回值说明：
+    - status='running': 正在处理，请间隔 20 秒后再次查询。
+    - status='completed': 处理成功，现在可以调用 query_financial_knowledge 进行检索。
+    - status='failed': 处理失败，请检查 result 字段中的错误原因。
+    """
+    status = task_status_center.get(task_id)
+    if not status:
+        return {"code": 1, "msg": "无效的 Task ID 或任务已过期（任务结果仅保留 1 小时）"}
+
+    # 获取当前状态
+    current_status = status["status"]
+
+    response = {
+        "status": current_status,
+        "progress": status.get("progress"),
+        "result": status.get("result")
+    }
+
+    # 提示信息：告知用户结果保留时长
+    if current_status in ["completed", "failed"]:
+        response["msg"] = "任务已结束。结果将在 1 小时后自动从缓存中清除。"
+
+    return response
+
+
+@corp_intel_mcp.tool()
+async def query_financial_knowledge(question: str, stock_code: str = None, annual: str = None, report_type: str = None,
+                                    n_results: int = 5):
+    """
+    在向量数据库中进行语义搜索，回答有关财报的具体问题。
+
+    参数建议：
+    - 务必提供 stock_code (如 '600519') 和 annual (如 '2023') 以进行精准过滤。
+
+    工作流引导：
+    - 如果返回 "【数据缺失】"，表示 PDF 存在但未入库，请调用 pdf_to_md_async。
+    - 如果返回 "【未找到报告】"，表示本地无文件，请调用 download_financial_report。
     """
     output_dir = os.getenv("OUTPUT_DIR", str(Path(__file__).parent.joinpath("output")))
-    
-    # 1. 存在性检查逻辑
+
+    # 1. 存在性检查逻辑 (保持你的逻辑，这是极佳的用户引导)
     if stock_code and annual and report_type:
         md_dir = Path(output_dir).joinpath("md")
         pdf_dir = Path(output_dir).joinpath("pdf")
-        
-        # 检查是否已存在 MD (代表已解析)
+
         md_pattern = f"*{stock_code}*{annual}*{report_type}*.md"
         md_files = list(md_dir.glob(md_pattern)) if md_dir.exists() else []
-        
+
         if not md_files:
-            # MD 不存在，检查 PDF 是否存在
             pdf_pattern = f"*{stock_code}*{annual}*{report_type}*.pdf"
             pdf_files = list(pdf_dir.glob(pdf_pattern)) if pdf_dir.exists() else []
-            
+
             if pdf_files:
                 return {
-                    "code": 1, 
-                    "msg": f"【数据缺失】数据库中暂无该财报信息。检测到本地已存在 PDF 文件：{pdf_files[0].name}，请先调用 pdf_to_md(pdf_path='{pdf_files[0]}') 进行解析入库。"
+                    "code": 1,
+                    "msg": f"【数据缺失】本地存在 PDF ({pdf_files[0].name}) 但尚未解析。请先调用 pdf_to_md_async 进行处理。"
                 }
             else:
                 return {
-                    "code": 1, 
-                    "msg": f"【未找到报告】数据库及本地 PDF 库中均未找到该财报（{stock_code}/{annual}/{report_type}）。\n建议操作：\n1. 调用 get_financial_report_list 获取报告链接\n2. 调用 download_financial_report 下载 PDF\n3. 调用 pdf_to_md 解析入库。"
+                    "code": 1,
+                    "msg": f"【未找到报告】库中无记录。请依次：1.获取列表 2.下载PDF 3.异步解析。"
                 }
 
-    # 2. 数据库连接与查询
+    # 2. 数据库连接
     chroma_client = chromadb.PersistentClient(path=output_dir)
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="BAAI/bge-small-zh-v1.5")
     collection = chroma_client.get_or_create_collection(name="financial_reports", embedding_function=ef)
-    
-    # 如果提供了 stock_code，可以增加元数据过滤（如果 pdf_to_md 存了对应元数据的话）
-    # 这里先使用通用的语义检索
+
+    # --- 关键修正：构建过滤条件 ---
+    filters = []
+    if stock_code: filters.append({"stock_code": {"$eq": stock_code}})
+    if annual: filters.append({"annual": {"$eq": annual}})
+    if report_type: filters.append({"report_type": {"$eq": report_type}})
+
+    where_clause = None
+    if len(filters) > 1:
+        where_clause = {"$and": filters}
+    elif len(filters) == 1:
+        where_clause = filters[0]
+
+    # 3. 执行查询
+    # 注意：如果 where_clause 为 None，需要确保不传递该参数或显式设为 None
     results = collection.query(
         query_texts=[question],
-        n_results=n_results
+        n_results=n_results,
+        where=where_clause
     )
-    
-    # 3. 拼装返回结果
-    context = ""
-    if results['documents'] and len(results['documents'][0]) > 0:
-        for i, doc in enumerate(results['documents'][0]):
-            meta = results['metadatas'][0][i]
-            context += f"--- 来源: {meta['filename']} (章节: {meta['section']}, 页码: {meta['pages']}) ---\n"
-            context += f"{doc}\n\n"
-    else:
-        return {"code": 1, "msg": "未在数据库中检索到相关内容，请确认财报是否已正确入库。"}
-        
-    return context
 
+    # 4. 拼装结果 (增加了一个判断，防止 results 为空导致的索引错误)
+    if not results or not results.get('documents') or len(results['documents'][0]) == 0:
+        return {"code": 1, "msg": "未检索到相关内容。可能是由于过滤条件过严或文档尚未入库。"}
 
+    context_list = []
+    for i, doc in enumerate(results['documents'][0]):
+        meta = results['metadatas'][0][i]
+        # 使用 get 防止元数据缺失导致报错
+        source = meta.get('filename', '未知来源')
+        section = meta.get('section', '正文')
+        pages = meta.get('pages', '-')
 
+        entry = f"--- 来源: {source} (章节: {section}, 页码: {pages}) ---\n{doc}\n"
+        context_list.append(entry)
+
+    return "\n".join(context_list)
 
 
 if __name__ == '__main__':
