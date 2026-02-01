@@ -92,10 +92,10 @@ async def download_financial_report(url: str, stock_code: str, title: str):
         output_path.mkdir(parents=True, exist_ok=True)
 
     if "sse" in url:
-        return await sse.download_pdf(url, stock_code, title, output_dir)
+        return await sse.download_pdf(url, stock_code, title, str(output_path))
 
     elif "szse" in url:
-        return await szse.download_pdf(url, stock_code, title, output_dir)
+        return await szse.download_pdf(url, stock_code, title, str(output_path))
 
     else:
         return {"code": 1, "data": "下载失败，请重试"}
