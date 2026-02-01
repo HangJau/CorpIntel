@@ -129,7 +129,7 @@ class SZSE:
         except Exception as e:
             return {"code": 1, "data": f"An error occurred: {e}"}
 
-    async def download_pdf(self, pdf_url, code:str, pdf_name: str, path: str):
+    async def download_pdf(self, pdf_url, code: str, pdf_name: str, path: str):
         """
         下载财报
         :param pdf_url: 下载地址
