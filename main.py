@@ -23,7 +23,7 @@ szse = SZSE()
 
 
 @corp_intel_mcp.tool()
-def find_md_report_list(stock_code: str, annual: str, report_type: Literal["年报", "一季度报", "半年度报", "三季度报", "全部"],
+def find_report_list(stock_code: str, annual: str, report_type: Literal["年报", "一季度报", "半年度报", "三季度报", "全部"],
                         file_format: Literal["md", "pdf"] = "md"):
     """
     获取指定股票的财务报表数据，分为PDF和MD格式，PDF格式需要通过download_financial_report进行下载，MD格式已转换

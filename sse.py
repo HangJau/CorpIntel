@@ -188,14 +188,14 @@ class SSE:
         if re_result := re.search(r"var arg1='(.+?)'", pdf_resp.text):
             arg1 = re_result.group(1)
             self.set_cookie(arg1)
-        file_path = Path(path).joinpath(f"({code})" + pdf_name)
+        file_path = Path(path).joinpath(f"({code}){pdf_name}.pdf")
         pdf_resp = await self.client.get(pdf_url)
 
-        async with aiofiles.open(f'{file_path}.pdf', mode='wb') as file:
+        async with aiofiles.open(file_path, mode='wb') as file:
             await file.write(pdf_resp.content)
             await file.close()
 
-        return {"code": 0, "data": f"{pdf_name}.pdf Save Success. save path {path}"}
+        return {"code": 0, "data": f"Save Success. save path {file_path}"}
 
     def set_cookie(self, arg):
         """
