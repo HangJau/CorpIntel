@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import MutableMapping
 from docling.document_converter import DocumentConverter
 from docling.chunking import HybridChunker
+# 导入必要的配置类
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
+
 import chromadb
 from chromadb.utils import embedding_functions
 
@@ -14,17 +18,34 @@ async def process_pdf_to_vector_task(task_id: str, pdf_path: str, tasks_registry
     核心转换逻辑：PDF -> Markdown -> ChromaDB
     """
     try:
-        tasks_registry[task_id]["progress"] = "Converting PDF (Docling)..."
+        # 1. 精细化配置参数
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_ocr = False  # 禁用 OCR
+        pipeline_options.do_formula_enrichment = False  # 禁用公式识别
+        
+        # 针对财报，保留表格结构识别
+        pipeline_options.do_table_structure = True 
+
+        # 2. 初始化转换器，注入配置
+        converter = DocumentConverter(
+            format_options={
+                "pdf": PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
 
         # 1. 转换 PDF (耗时操作，放入线程池)
-        pdf_p = Path(pdf_path)
-        converter = DocumentConverter()
+        # converter = DocumentConverter()
+        
+        tasks_registry[task_id]["progress"] = "Converting PDF (Docling)..."
+        
         # 使用 to_thread 防止阻塞事件循环
         result = await asyncio.to_thread(converter.convert, pdf_path)
 
         # 2. 导出并保存 Markdown
         tasks_registry[task_id]["progress"] = "Saving Markdown..."
         markdown_content = result.document.export_to_markdown()
+
+        pdf_p = Path(pdf_path)
 
         md_path = pdf_p.parent.parent.joinpath("md")
         md_path.mkdir(parents=True, exist_ok=True)
