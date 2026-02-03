@@ -6,8 +6,8 @@ from typing import Literal
 
 from cachetools import TTLCache
 from fastmcp import FastMCP
-import chromadb
-from chromadb.utils import embedding_functions
+import lancedb
+
 
 from pdfTomd import process_pdf_to_vector_task
 from sse import SSE
@@ -108,10 +108,11 @@ async def pdf_to_md_async(pdf_path: str) -> dict:
 
     逻辑：
     1. 立即返回 task_id。
-    2. 后台执行：Docling解析 -> 语义切片 -> BGE向量化 -> ChromaDB入库。
+    2. 后台执行：Docling解析 -> 语义切片 -> BGE向量化 -> LanceDB入库。
+
 
     注意：
-    - 处理过程通常需要 1-3 分钟。
+    - 处理过程通常需要20分钟不等，根据当前设备配置大小需要更长时间。
     - 调用后，你必须使用 check_task_status(task_id) 轮询进度。
     - 在状态变为 'completed' 之前，query_financial_knowledge 将无法查到该报告数据。
     """
@@ -181,70 +182,51 @@ async def query_financial_knowledge(question: str, stock_code: str = None, annua
     """
     output_dir = os.getenv("OUTPUT_DIR", str(Path(__file__).parent.joinpath("output")))
 
-    # 1. 存在性检查逻辑 (保持你的逻辑，这是极佳的用户引导)
-    if stock_code and annual and report_type:
-        md_dir = Path(output_dir).joinpath("md")
-        pdf_dir = Path(output_dir).joinpath("pdf")
+    # 2. 数据库连接（必须与 pdfTomd.py 一致）
+    lancedb_dir = Path(output_dir).joinpath("lancedb")
+    db = lancedb.connect(str(lancedb_dir))
+    table_name = "financial_reports_bge"  # 必须与 pdfTomd.py 的表名一致
+    
+    # Note: list_tables() 返回 ListTablesResponse 对象，需要访问 .tables 属性
+    table_names = db.list_tables().tables if hasattr(db.list_tables(), 'tables') else []
+    
+    if table_name not in table_names:
 
-        md_pattern = f"*{stock_code}*{annual}*{report_type}*.md"
-        md_files = list(md_dir.glob(md_pattern)) if md_dir.exists() else []
+        return {"code": 1, "msg": "向量数据库尚未初始化，请先调用 pdf_to_md_async 处理文档。"}
 
-        if not md_files:
-            pdf_pattern = f"*{stock_code}*{annual}*{report_type}*.pdf"
-            pdf_files = list(pdf_dir.glob(pdf_pattern)) if pdf_dir.exists() else []
+    table = db.open_table(table_name)
 
-            if pdf_files:
-                return {
-                    "code": 1,
-                    "msg": f"【数据缺失】本地存在 PDF ({pdf_files[0].name}) 但尚未解析。请先调用 pdf_to_md_async 进行处理。"
-                }
-            else:
-                return {
-                    "code": 1,
-                    "msg": f"【未找到报告】库中无记录。请依次：1.获取列表 2.下载PDF 3.异步解析。"
-                }
-
-    # 2. 数据库连接
-    chroma_client = chromadb.PersistentClient(path=output_dir)
-    ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="BAAI/bge-small-zh-v1.5")
-    collection = chroma_client.get_or_create_collection(name="financial_reports", embedding_function=ef)
-
-    # --- 关键修正：构建过滤条件 ---
+    # --- 构建过滤条件 (SQL 语法) ---
     filters = []
-    if stock_code: filters.append({"stock_code": {"$eq": stock_code}})
-    if annual: filters.append({"annual": {"$eq": annual}})
-    if report_type: filters.append({"report_type": {"$eq": report_type}})
+    if stock_code: filters.append(f"stock_code = '{stock_code}'")
+    if annual: filters.append(f"annual = '{annual}'")
+    if report_type: filters.append(f"report_type = '{report_type}'")
 
-    where_clause = None
-    if len(filters) > 1:
-        where_clause = {"$and": filters}
-    elif len(filters) == 1:
-        where_clause = filters[0]
+    where_clause = " AND ".join(filters) if filters else None
 
     # 3. 执行查询
-    # 注意：如果 where_clause 为 None，需要确保不传递该参数或显式设为 None
-    results = collection.query(
-        query_texts=[question],
-        n_results=n_results,
-        where=where_clause
-    )
+    query = table.search(question).limit(n_results)
+    if where_clause:
+        query = query.where(where_clause)
+    
+    results = query.to_list()
 
-    # 4. 拼装结果 (增加了一个判断，防止 results 为空导致的索引错误)
-    if not results or not results.get('documents') or len(results['documents'][0]) == 0:
+    # 4. 拼装结果
+    if not results:
         return {"code": 1, "msg": "未检索到相关内容。可能是由于过滤条件过严或文档尚未入库。"}
 
     context_list = []
-    for i, doc in enumerate(results['documents'][0]):
-        meta = results['metadatas'][0][i]
-        # 使用 get 防止元数据缺失导致报错
-        source = meta.get('filename', '未知来源')
-        section = meta.get('section', '正文')
-        pages = meta.get('pages', '-')
+    for row in results:
+        source = row.get('filename', '未知来源')
+        section = row.get('section', '正文')
+        pages = row.get('pages', '-')
+        doc = row.get('text', '')
 
         entry = f"--- 来源: {source} (章节: {section}, 页码: {pages}) ---\n{doc}\n"
         context_list.append(entry)
 
     return "\n".join(context_list)
+
 
 
 if __name__ == '__main__':

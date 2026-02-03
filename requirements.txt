@@ -4,9 +4,12 @@ fastmcp
 # pdf解析
 docling
 # 向量化知识库
-chromadb
+lancedb
+pyarrow
+
 langchain-community
 langchain-huggingface
 langchain-text-splitters
 sentence-transformers
+
 
