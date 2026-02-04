@@ -209,13 +209,13 @@ async def process_pdf_to_vector_task(task_id: str, pdf_path: str, tasks_registry
                     
                     if existing:
                         # 存在旧数据，先删除
-                        print(f"⚠️ 发现已存在数据：{s_code}_{s_year}_{r_type}，删除旧数据...")
+                        # print(f"⚠️ 发现已存在数据：{s_code}_{s_year}_{r_type}，删除旧数据...")
                         table.delete(f"stock_code = '{s_code}' AND annual = '{s_year}' AND report_type = '{r_type}'")
-                        print(f"✅ 追加新数据：{s_code}_{s_year}_{r_type} ({len(data)} chunks)")
+                        # print(f"✅ 追加新数据：{s_code}_{s_year}_{r_type} ({len(data)} chunks)")
                         table.add(data)
                     else:
                         # 不存在，直接追加
-                        print(f"✅ 追加新数据：{s_code}_{s_year}_{r_type} ({len(data)} chunks)")
+                        # print(f"✅ 追加新数据：{s_code}_{s_year}_{r_type} ({len(data)} chunks)")
                         table.add(data)
                 except Exception as e:
                     # 查询失败（可能是表结构变化），直接追加
@@ -223,7 +223,7 @@ async def process_pdf_to_vector_task(task_id: str, pdf_path: str, tasks_registry
                     table.add(data)
             else:
                 # 首次创建表
-                print(f"✅ 创建新表：{table_name}")
+                # print(f"✅ 创建新表：{table_name}")
                 db.create_table(table_name, schema=FinancialReports, data=data)
             
             return len(data)
