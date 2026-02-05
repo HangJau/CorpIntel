@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
+import httpx
 from cachetools import TTLCache
 from fastmcp import FastMCP
 import lancedb
@@ -21,6 +22,16 @@ corp_intel_mcp = FastMCP("CorpIntel")
 sse = SSE()
 szse = SZSE()
 
+
+@corp_intel_mcp.tool()
+def get_now_date():
+    """
+    获取当前日期，格式为{"status": 1, "date": "2026-02-04", "info": "工作日", "week": "周三", "is_workingday": 1}
+    """
+    header = {"user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"}
+
+    date_rsp = httpx.get("https://www.iamwawa.cn/workingday/api", headers=header)    
+    return date_rsp.json()
 
 @corp_intel_mcp.tool()
 def find_report_list(stock_code: str, annual: str, report_type: Literal["年报", "一季度报", "半年度报", "三季度报", "全部"],
