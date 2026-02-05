@@ -8,19 +8,41 @@ import httpx
 from cachetools import TTLCache
 from fastmcp import FastMCP
 import lancedb
+from sentence_transformers import SentenceTransformer
 
 
 from pdfTomd import process_pdf_to_vector_task
 from sse import SSE
 from szse import SZSE
 
+
+# 统一获取绝对路径
+BASE_DIR = Path(__file__).parent.absolute()
+DEFAULT_OUTPUT_DIR = str(BASE_DIR.joinpath("output"))
+
 # 全局任务注册表：最多存储 1000 个任务，每个任务存活 1 小时 (3600秒)
 # 这样即使 AI 忘了查，内存也会自动回收
 task_status_center = TTLCache(maxsize=1000, ttl=3600)
 
+# 全局 Embedding 模型（用于查询时向量化）
+EMBED_MODEL_ID = "BAAI/bge-small-zh-v1.5"
+_embed_model = None
+
+def get_embed_model():
+    """懒加载 Embedding 模型（仅在查询时初始化）"""
+    global _embed_model
+    if _embed_model is None:
+        _embed_model = SentenceTransformer(EMBED_MODEL_ID, trust_remote_code=True)
+        _embed_model.max_seq_length = 512
+    return _embed_model
+
 corp_intel_mcp = FastMCP("CorpIntel")
 sse = SSE()
 szse = SZSE()
+
+
+def get_real_output_dir():
+    return os.getenv("OUTPUT_DIR", DEFAULT_OUTPUT_DIR)
 
 
 @corp_intel_mcp.tool()
@@ -33,8 +55,9 @@ def get_now_date():
     date_rsp = httpx.get("https://www.iamwawa.cn/workingday/api", headers=header)    
     return date_rsp.json()
 
+
 @corp_intel_mcp.tool()
-def find_report_list(stock_code: str, annual: str, report_type: Literal["年报", "一季度报", "半年度报", "三季度报", "全部"],
+def find_report_list(stock_code: str, annual: str, report_type: Literal["年报", "一季度报", "半年度报", "三季度报"],
                         file_format: Literal["md", "pdf"] = "md"):
     """
     获取指定股票的财务报表数据，分为PDF和MD格式，PDF格式需要通过download_financial_report进行下载，MD格式已转换
@@ -44,7 +67,7 @@ def find_report_list(stock_code: str, annual: str, report_type: Literal["年报"
     :param file_format: 查询的报告文件类型，选 "md" 或 "pdf"
     :return: {"code": 0, "data": "报告路径"}
     """
-    output_dir = os.getenv("OUTPUT_DIR", str(Path(__file__).parent.joinpath("output")))
+    output_dir = get_real_output_dir()
     output_path = Path(output_dir)
 
     if file_format == "md":
@@ -95,7 +118,7 @@ async def download_financial_report(url: str, stock_code: str, title: str):
 
     :return: {"code": 0, "data": f"{pdf_name}.pdf Save Success. save path {path}"}
     """
-    output_dir = os.getenv("OUTPUT_DIR", str(Path(__file__).parent.joinpath("output")))
+    output_dir = get_real_output_dir()
 
     output_path = Path(output_dir).joinpath("pdf")
 
@@ -138,13 +161,13 @@ async def pdf_to_md_async(pdf_path: str) -> dict:
         "progress": "Task initialized",
         "result": None
     }
-
-    _ = asyncio.create_task(process_pdf_to_vector_task(task_id, pdf_path, task_status_center))
+    output_dir = get_real_output_dir()
+    _ = asyncio.create_task(process_pdf_to_vector_task(task_id, pdf_path, task_status_center, output_dir))
 
     return {
         "code": 0,
         "task_id": task_id,
-        "msg": "PDF处理任务已在后台启动。处理完成后结果将保留 1 小时。"
+        "msg": "PDF处理任务已在后台启动。请使用 check_task_status 轮询进度，处理完成后结果将保留 1 小时。"
     }
 
 
@@ -194,7 +217,12 @@ async def query_financial_knowledge(question: str, stock_code: str = None, annua
     output_dir = os.getenv("OUTPUT_DIR", str(Path(__file__).parent.joinpath("output")))
 
     # 2. 数据库连接（必须与 pdfTomd.py 一致）
+    output_dir = get_real_output_dir()
     lancedb_dir = Path(output_dir).joinpath("lancedb")
+
+    if not lancedb_dir.exists():
+        return {"code": 1, "msg": "数据库目录不存在，请先转换文档。"}
+
     db = lancedb.connect(str(lancedb_dir))
     table_name = "financial_reports_bge"  # 必须与 pdfTomd.py 的表名一致
     
@@ -202,7 +230,6 @@ async def query_financial_knowledge(question: str, stock_code: str = None, annua
     table_names = db.list_tables().tables if hasattr(db.list_tables(), 'tables') else []
     
     if table_name not in table_names:
-
         return {"code": 1, "msg": "向量数据库尚未初始化，请先调用 pdf_to_md_async 处理文档。"}
 
     table = db.open_table(table_name)
@@ -215,14 +242,18 @@ async def query_financial_knowledge(question: str, stock_code: str = None, annua
 
     where_clause = " AND ".join(filters) if filters else None
 
-    # 3. 执行查询
-    query = table.search(question).limit(n_results)
+    # 3. 将问题转换为向量（使用全局模型）
+    model = get_embed_model()
+    question_vector = model.encode([question], convert_to_numpy=True)[0]
+    
+    # 4. 执行向量搜索
+    query = table.search(question_vector).limit(n_results)
     if where_clause:
         query = query.where(where_clause)
     
     results = query.to_list()
 
-    # 4. 拼装结果
+    # 5. 拼装结果
     if not results:
         return {"code": 1, "msg": "未检索到相关内容。可能是由于过滤条件过严或文档尚未入库。"}
 
